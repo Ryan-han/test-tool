@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<project name="maven-antrun-" default="main"  >
+<target name="main">
+  <copy todir="/Users/ryan/workspaces/nexr-collector/nclt-test-tool/target/generated-sources/version/com/cloudera/flume" overwrite="true">
+    <fileset dir="/Users/ryan/workspaces/nexr-collector/nclt-test-tool/src/main/version"/>
+    <filterset begintoken="%" endtoken="%">
+      <filter token="VERSION" value="0.0.1-SNAPSHOT"/>
+      <filter token="REV" value="${buildNumber}"/>
+      <filter token="USER" value="ryan"/>
+      <filter token="DATE" value="${timestamp}"/>
+      <filter token="URL" value="${project.scm.url}"/>
+    </filterset>
+  </copy>
+</target>
+</project>

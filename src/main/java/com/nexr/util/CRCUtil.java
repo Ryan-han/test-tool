@@ -1,4 +1,4 @@
-package com.cloudera.flume.util;
+package com.nexr.util;
 
 import java.util.zip.CRC32;
 
