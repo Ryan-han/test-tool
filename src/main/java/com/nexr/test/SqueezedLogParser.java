@@ -19,6 +19,7 @@ public class SqueezedLogParser implements TimeStampParser{
 	public long getTimeStamp(String record, String timeFormat) {
 		// TODO Auto-generated method stub
 		long timestamp = 0;
+		LOG.debug("Time Format " + timeFormat);
 		
 		dateFormat = new SimpleDateFormat(timeFormat, Locale.US);
 		Date d = null;
