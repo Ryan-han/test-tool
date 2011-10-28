@@ -1,4 +1,5 @@
 package com.nexr.test;
+
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
@@ -16,8 +17,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.SequenceFile;
 import org.apache.hadoop.io.Text;
-import org.apache.hadoop.io.Writable;
-import org.apache.hadoop.util.ReflectionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -26,13 +25,8 @@ import com.nexr.util.CRCUtil;
 
 public class SeqGenerator {
 	static final Logger LOG = LoggerFactory.getLogger(SeqGenerator.class);
-	static final String FNAME_START_TAG = "TFNameStart-";
-	static final String FNAME_END_TAG = "-TFNameEnd";
 
-	// public static DateFormat dateFormat = null;
-	StringBuffer tmp = new StringBuffer();
 	String fileName;
-
 	String dataType = null;
 	String parserClass = null;
 	int timeColnum = 0;
@@ -43,11 +37,7 @@ public class SeqGenerator {
 	String rd = "\n";
 	int rp = 0;
 
-	private SeqThread st;
-
 	public SeqGenerator() {
-		this.st = new SeqThread();
-		st.start();
 	}
 
 	public static void main(String[] argv) {
@@ -65,8 +55,130 @@ public class SeqGenerator {
 		}
 	}
 
-	private void setup(String argv[]) {
+	private String[] getInputFiles() {
+		File input = new File(inputPath);
+		return input.list();
+	}
 
+	private boolean readData(String[] inputs) throws FileNotFoundException, IOException {
+		boolean res = false;
+		InputStream in = null;
+		for (int i = 0; i < inputs.length; i++) {
+			SeqThread st = new SeqThread(inputPath + File.separator + inputs[i]);
+			st.start();
+		}
+		return res;
+	}
+
+	class SeqThread extends Thread {
+		LogRecordKey key = new LogRecordKey();
+		CRCUtil crcUtil = new CRCUtil();
+		boolean complete = false;
+		String record = null;
+		long timestamp;
+		Configuration conf = new Configuration();
+		FileSystem fs = null;
+		SequenceFile.Writer writer = null;
+		long writerCreatTime;
+		String input_fileName;
+		TimeStampParser tsParsor;
+		StringBuffer tmp;
+		InputStream in;
+
+		SeqThread(String fileName) {
+			super("SeqThread");
+			this.input_fileName = fileName;
+
+			this.tmp = new StringBuffer();
+			try {
+				in = new FileInputStream(fileName);
+			} catch (FileNotFoundException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+
+			try {
+				fs = FileSystem.get(conf);
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+
+			try {
+				writer = SequenceFile.createWriter(fs, conf,
+						new Path(outputPath, fileName.substring(fileName.lastIndexOf("/") + 1, fileName.length())), key.getClass(),
+						Text.class);
+			} catch (IOException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+		}
+
+		public void run() {
+			try {
+				int el;
+				byte[] buffer = new byte[4098];
+				LOG.info("Start File " + input_fileName);
+				while ((el = in.read(buffer)) != -1) {
+					synchronized (tmp) {
+						tmp.append(new String(buffer));
+						buffer = new byte[4098];
+
+						while (tmp.toString().contains(rd)) {
+							int index = tmp.indexOf(rd) + 1;
+							record = tmp.substring(0, index);
+
+							tmp.delete(0, index);
+							if (tsParsor == null) {
+								try {
+									tsParsor = ((TimeStampParser) Class.forName(parserClass).newInstance());
+									Thread.sleep(10);
+								} catch (Exception e) {
+									// TODO Auto-generated catch block
+									e.printStackTrace();
+								}
+							}
+
+							try {
+								timestamp = tsParsor.getTimeStamp(record, timeFormat);
+							} catch (Exception e1) {
+								// TODO Auto-generated catch block
+							}
+							/* depend on data format */
+
+							key.setDataType(dataType);
+							key.setTime(Long.toString(timestamp));
+							key.setLogId(input_fileName + crcUtil.genHash(record.getBytes()));
+							Text value = new Text(record);
+
+							if (timestamp != 0) {
+								try {
+									writer.append(key, value);
+								} catch (IOException e) {
+									// TODO Auto-generated catch block
+									e.printStackTrace();
+								}
+							}
+						}
+
+					}
+				}
+				in.close();
+			} catch (IOException e1) {
+				// TODO Auto-generated catch block
+				e1.printStackTrace();
+			}
+
+			LOG.info("Close File " + input_fileName + " " + tmp.length());
+			LOG.info(tmp.toString());
+
+			IOUtils.closeStream(writer);
+			LOG.info("Finish File " + input_fileName + " " + tmp.length());
+		}
+
+	};
+
+	private void setup(String argv[]) {
 		CommandLine cmd = null;
 		Options options = new Options();
 		options.addOption("d", true, "DataType");
@@ -91,7 +203,7 @@ public class SeqGenerator {
 		if (cmd != null && cmd.hasOption("d")) {
 			dataType = cmd.getOptionValue("d");
 		}
-		
+
 		if (cmd != null && cmd.hasOption("cp")) {
 			parserClass = cmd.getOptionValue("cp");
 		}
@@ -131,158 +243,4 @@ public class SeqGenerator {
 		}
 	}
 
-	private String[] getInputFiles() {
-		File input = new File(inputPath);
-		return input.list();
-	}
-
-	private boolean readData(String[] inputs) throws FileNotFoundException, IOException {
-		boolean res = false;
-
-		InputStream in = null;
-		for (int i = 0; i < inputs.length; i++) {
-			fileName = FNAME_START_TAG + inputs[i] + FNAME_END_TAG;
-			in = new FileInputStream(inputPath + File.separator + inputs[i]);
-			int el;
-			byte[] buffer = new byte[1 << 15];
-			tmp.append(fileName);
-			LOG.info("Start File " + fileName);
-
-			buffer = new byte[1 << 15];
-			while ((el = in.read(buffer)) != -1) {
-				synchronized (tmp) {
-					tmp.append(new String(buffer));
-					buffer = new byte[1 << 15];
-				}
-			}
-		}
-
-		return res;
-	}
-
-	class SeqThread extends Thread {
-		LogRecordKey key = new LogRecordKey();
-		CRCUtil crcUtil = new CRCUtil();
-		boolean complete = false;
-		String record = null;
-		long timestamp;
-		Configuration conf = new Configuration();
-		FileSystem fs = null;
-		SequenceFile.Writer writer = null;
-		long writerCreatTime;
-		String fName;
-		TimeStampParser tsParsor;
-
-		SeqThread() {
-			super("SeqThread");
-			try {
-				fs = FileSystem.get(conf);
-			} catch (IOException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-			}
-		}
-
-		int z = 0;
-		int totalSize = 0;
-
-		public void run() {
-			while (!complete) {
-				if (tmp.length() > 1) {
-					z++;
-					synchronized (tmp) {
-						int index = tmp.indexOf(rd) + 1;
-						record = tmp.substring(0, index);
-						if (record.contains(FNAME_START_TAG)) {
-							LOG.info("Tag exist " + record);
-							fName = record.substring(record.indexOf(FNAME_START_TAG) + FNAME_START_TAG.length(),
-									record.indexOf(FNAME_END_TAG));
-							LOG.info("FileName ==> " + fName);
-							record = record.substring(record.indexOf(FNAME_END_TAG) + FNAME_END_TAG.length(), record.length());
-						}
-
-						totalSize += record.length();
-						tmp.delete(0, index);
-
-						LOG.debug("Record ==> " + record + " " + z + " " + totalSize);
-					}
-
-					/* depend on data format */
-					if (tsParsor == null) {
-						try {
-							tsParsor = ((TimeStampParser) Class.forName(parserClass).newInstance());
-						} catch (InstantiationException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						} catch (IllegalAccessException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						} catch (ClassNotFoundException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-					}
-					timestamp = tsParsor.getTimeStamp(record, timeFormat);
-					/* depend on data format */
-
-					key.setDataType(dataType);
-					key.setTime(Long.toString(timestamp));
-					key.setLogId(fName + crcUtil.genHash(record.getBytes()));
-					Text value = new Text(record);
-
-					if (writer == null) {
-						writerCreatTime = System.currentTimeMillis();
-						try {
-							writer = SequenceFile.createWriter(fs, conf, new Path(outputPath, Long.toString(writerCreatTime)),
-									key.getClass(), Text.class);
-						} catch (IOException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-					}
-
-					if (timestamp != 0) {
-						try {
-							writer.append(key, value);
-						} catch (IOException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-					}
-
-					if (rp != 0) {
-						if ((writerCreatTime + (rp * 1000)) < System.currentTimeMillis()) {
-							IOUtils.closeStream(writer);
-							writer = null;
-						}
-					}
-
-					if (tmp.toString().trim().length() == 0) {
-						complete = true;
-						IOUtils.closeStream(writer);
-						LOG.info("Complete!!");
-					}
-				}
-			}
-
-			if (LOG.isDebugEnabled()) {
-				SequenceFile.Reader reader = null;
-				try {
-					reader = new SequenceFile.Reader(fs, new Path(outputPath, Long.toString(writerCreatTime)), conf);
-					Writable key = (Writable) ReflectionUtils.newInstance(reader.getKeyClass(), conf);
-					Writable value = (Writable) ReflectionUtils.newInstance(reader.getValueClass(), conf);
-					while (reader.next(key, value)) {
-						LOG.debug("Key " + key.toString() + " Value  => " + value.toString());
-					}
-
-				} catch (IOException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				} finally {
-					IOUtils.closeStream(reader);
-				}
-			}
-		}
-
-	};
 }
